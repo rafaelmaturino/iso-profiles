@@ -132,15 +132,20 @@ if [[ ! -e /usr/lib/libmariadbodbc.so ]]; then
     cmake --build /tmp/odbc-odbc/build -j"$(nproc)"
     cmake --install /tmp/odbc-odbc/build
     ldconfig
-    # Connector installs under lib/mariadb/ (INSTALL_LIBDIR), while odbcinst.ini
-    # expects /usr/lib/libmariadbodbc.so — link the real .so into place.
-    so=$(find /usr/lib -name 'libmariadbodbc.so*' 2>/dev/null | head -1)
+    # Upstream installs the driver as libmaodbc.so (often under lib/mariadb/);
+    # odbcinst.ini/odbc.ini expect /usr/lib/libmariadbodbc.so — link it there.
+    so=$(find /usr/lib /usr/local/lib -name 'libmaodbc.so*' -o -name 'libmariadbodbc.so*' 2>/dev/null | head -1)
     if [[ -z "$so" ]]; then
-        find /usr -name '*mariadb*odbc*' 2>/dev/null | head -20 >&2 || true
-        die "libmariadbodbc.so not found anywhere after install"
+        find /usr -name '*maodbc*' -o -name '*mariadb*odbc*' 2>/dev/null | head -30 >&2 || true
+        die "maodbc/libmariadbodbc.so not found anywhere after install"
     fi
     log "linking $so -> /usr/lib/libmariadbodbc.so"
     ln -sfn "$so" /usr/lib/libmariadbodbc.so
+    # Also provide the upstream name in case something looks for libmaodbc.so.
+    base=$(basename "$so")
+    if [[ "$base" != libmariadbodbc.so && ! -e /usr/lib/libmaodbc.so ]]; then
+        ln -sfn "$so" /usr/lib/libmaodbc.so
+    fi
     ldconfig
     rm -rf /tmp/odbc-odbc
 fi
