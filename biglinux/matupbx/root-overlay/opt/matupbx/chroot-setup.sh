@@ -167,30 +167,38 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     fetch "$AST_URL" /tmp/asterisk.tar.gz || die "cannot download Asterisk tarball"
     tar -xzf /tmp/asterisk.tar.gz -C /tmp/asterisk --strip-components=1
     cd /tmp/asterisk
-    # chan_sip only (SNEP); bundled pjproject is for res_pjsip and its
-    # third-party config.status breaks on this toolchain (sed 0a… error).
-    # SHELLOPTS/BASHOPTS leak `nounset` into child bash (config.status) and
-    # corrupt the generated script (`0a1,540` / stray `>` lines).
+    # chan_sip only (SNEP); bundled pjproject is for res_pjsip.
+    # The shipped configure writes a corrupt config.status on this toolchain
+    # (`0a1,540`, literal `_ASBOX`, stray `>` lines). Regenerate configure with
+    # the system autoconf from base-devel, then run a clean configure.
     export LANG=C LC_ALL=C
     export CONFIG_SHELL=/bin/bash SHELL=/bin/bash
-    unset SHELLOPTS BASHOPTS || true
     set +e
     set +u
     set +o pipefail
+    if [[ -f configure.ac || -f configure.in ]]; then
+        log "regenerating configure with system autoconf"
+        # shellcheck disable=SC2086
+        autoreconf -f -i -W all >/tmp/asterisk-autoreconf.log 2>&1 \
+            || { tail -40 /tmp/asterisk-autoreconf.log; log "autoreconf failed; trying shipped configure"; }
+    fi
     /bin/bash ./configure --with-odbc --with-pjproject=no \
         >/tmp/asterisk-configure.log 2>&1 \
         || {
             set -euo pipefail
-            tail -40 /tmp/asterisk-configure.log
+            tail -60 /tmp/asterisk-configure.log
             if [[ -f config.status ]]; then
                 echo "--- config.status wc ---" >&2
                 wc -l config.status >&2 || true
-                echo "--- config.status 525-535 ---" >&2
-                sed -n '525,535p' config.status >&2 || true
+                grep -n '0a1,\|_ASBOX' config.status | head -10 >&2 || true
             fi
             die "asterisk configure failed"
         }
     set -euo pipefail
+    # Sanity: config.status must be a runnable shell script
+    if ! bash -n config.status 2>/dev/null; then
+        die "config.status failed bash -n syntax check"
+    fi
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
     menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts
     make -j"$(nproc)" >/tmp/asterisk-make.log 2>&1 \
