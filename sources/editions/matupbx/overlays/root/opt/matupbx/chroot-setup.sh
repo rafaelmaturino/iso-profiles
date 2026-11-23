@@ -128,20 +128,28 @@ if [[ ! -e /usr/lib/libmariadbodbc.so ]]; then
         /tmp/odbc-odbc \
         || die "cannot clone mariadb-connector-odbc"
     cmake -S /tmp/odbc-odbc -B /tmp/odbc-odbc/build \
-        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-    cmake --build /tmp/odbc-odbc/build -j"$(nproc)"
-    cmake --install /tmp/odbc-odbc/build
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+        >/tmp/odbc-cmake.log 2>&1 \
+        || { tail -60 /tmp/odbc-cmake.log; die "odbc cmake configure failed"; }
+    cmake --build /tmp/odbc-odbc/build -j"$(nproc)" \
+        >/tmp/odbc-make.log 2>&1 \
+        || { tail -60 /tmp/odbc-make.log; die "odbc cmake build failed"; }
+    cmake --install /tmp/odbc-odbc/build \
+        >/tmp/odbc-install.log 2>&1 \
+        || { tail -60 /tmp/odbc-install.log; die "odbc cmake install failed"; }
+    tail -30 /tmp/odbc-install.log
     ldconfig
     # Upstream installs the driver as libmaodbc.so (often under lib/mariadb/);
     # odbcinst.ini/odbc.ini expect /usr/lib/libmariadbodbc.so — link it there.
-    so=$(find /usr/lib /usr/local/lib -name 'libmaodbc.so*' -o -name 'libmariadbodbc.so*' 2>/dev/null | head -1)
+    so=$(find /usr/lib /usr/local/lib \( -name 'libmaodbc.so*' -o -name 'libmariadbodbc.so*' \) 2>/dev/null | head -1)
     if [[ -z "$so" ]]; then
-        find /usr -name '*maodbc*' -o -name '*mariadb*odbc*' 2>/dev/null | head -30 >&2 || true
+        echo "--- odbc install log ---" >&2
+        cat /tmp/odbc-install.log >&2 || true
+        find /usr -name '*maodbc*' 2>/dev/null | head -30 >&2 || true
         die "maodbc/libmariadbodbc.so not found anywhere after install"
     fi
     log "linking $so -> /usr/lib/libmariadbodbc.so"
     ln -sfn "$so" /usr/lib/libmariadbodbc.so
-    # Also provide the upstream name in case something looks for libmaodbc.so.
     base=$(basename "$so")
     if [[ "$base" != libmariadbodbc.so && ! -e /usr/lib/libmaodbc.so ]]; then
         ln -sfn "$so" /usr/lib/libmaodbc.so
