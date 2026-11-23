@@ -28,7 +28,10 @@ env:
   commonBase: common-base
   # Editions to build, in order. xivastudio must come after kde: its
   # special-commands.sh appends the generated kde Packages-Desktop to its own.
-  editions: kde xivastudio
+  # matupbx grafts the Manjaro sections itself (like kde) and appends its
+  # telephony stack to Packages-Root, so its position only needs to be after
+  # kde for readability.
+  editions: kde xivastudio matupbx
 
 jobs:
   build:
