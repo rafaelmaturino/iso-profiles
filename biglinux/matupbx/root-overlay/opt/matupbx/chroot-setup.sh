@@ -169,9 +169,22 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     cd /tmp/asterisk
     # chan_sip only (SNEP); bundled pjproject is for res_pjsip and its
     # third-party config.status breaks on this toolchain (sed 0a… error).
-    ./configure --with-odbc --with-pjproject=no \
+    # LANG/LC_ALL=C: autoconf's config.status generation corrupts under some
+    # locales (stray `>` / `0a1,119` lines when bash executes it).
+    export LANG=C LC_ALL=C
+    export CONFIG_SHELL=/bin/bash SHELL=/bin/bash
+    /bin/bash ./configure --with-odbc --with-pjproject=no \
         >/tmp/asterisk-configure.log 2>&1 \
-        || { tail -40 /tmp/asterisk-configure.log; die "asterisk configure failed"; }
+        || {
+            tail -40 /tmp/asterisk-configure.log
+            if [[ -f config.status ]]; then
+                echo "--- config.status head ---" >&2
+                head -20 config.status >&2 || true
+                echo "--- config.status around 520-540 ---" >&2
+                sed -n '520,540p' config.status >&2 || true
+            fi
+            die "asterisk configure failed"
+        }
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
     menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts
     make -j"$(nproc)" >/tmp/asterisk-make.log 2>&1 \
