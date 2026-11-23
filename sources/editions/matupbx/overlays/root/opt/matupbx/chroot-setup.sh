@@ -167,7 +167,10 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     fetch "$AST_URL" /tmp/asterisk.tar.gz || die "cannot download Asterisk tarball"
     tar -xzf /tmp/asterisk.tar.gz -C /tmp/asterisk --strip-components=1
     cd /tmp/asterisk
-    ./configure --with-odbc >/tmp/asterisk-configure.log 2>&1 \
+    # chan_sip only (SNEP); bundled pjproject is for res_pjsip and its
+    # third-party config.status breaks on this toolchain (sed 0a… error).
+    ./configure --with-odbc --with-pjproject=no \
+        >/tmp/asterisk-configure.log 2>&1 \
         || { tail -40 /tmp/asterisk-configure.log; die "asterisk configure failed"; }
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
     menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts
