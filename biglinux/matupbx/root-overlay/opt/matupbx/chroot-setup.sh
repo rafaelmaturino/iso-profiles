@@ -70,23 +70,15 @@ if [[ ! -s /etc/resolv.conf ]] || ! grep -q nameserver /etc/resolv.conf 2>/dev/n
     printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
 fi
 
-# pacman refuses to commit a transaction without a readable /etc/mtab
-# ("could not open file" / "could not determine filesystem mount points").
-# A symlink to /proc/self/mounts is broken when /proc isn't mounted in the
-# build chroot — mount proc first, then materialize a real mtab file.
-if [[ ! -e /proc/self/mounts ]]; then
-    log "mounting /proc in chroot"
-    mkdir -p /proc
-    mount -t proc proc /proc 2>/dev/null || true
-fi
-if [[ ! -e /etc/mtab || ( -L /etc/mtab && ! -e /etc/mtab ) ]]; then
-    log "creating /etc/mtab for pacman"
+# pacman needs a readable /etc/mtab to commit transactions. A symlink to
+# /proc/self/mounts breaks when /proc isn't mounted; copying host mounts into
+# mtab confuses path resolution inside the chroot ("could not determine
+# cachedir mount point"). An empty regular file is enough: pacman then treats
+# the whole chroot as one filesystem for free-space checks.
+if [[ -L /etc/mtab || ! -e /etc/mtab ]]; then
+    log "creating empty /etc/mtab for pacman"
     rm -f /etc/mtab
-    if [[ -r /proc/self/mounts ]]; then
-        cat /proc/self/mounts > /etc/mtab
-    else
-        : > /etc/mtab
-    fi
+    : > /etc/mtab
 fi
 
 # --- 1. runtime packages ----------------------------------------------------
