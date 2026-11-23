@@ -70,6 +70,14 @@ if [[ ! -s /etc/resolv.conf ]] || ! grep -q nameserver /etc/resolv.conf 2>/dev/n
     printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
 fi
 
+# pacman refuses to commit a transaction without /etc/mtab ("could not
+# determine filesystem mount points"). manjaro-tools usually provides it;
+# when it doesn't, the first pacman -S that actually installs packages dies.
+if [[ ! -e /etc/mtab ]]; then
+    log "creating /etc/mtab for pacman"
+    ln -sfn /proc/self/mounts /etc/mtab
+fi
+
 # --- 1. runtime packages ----------------------------------------------------
 log "installing runtime packages"
 pacman -S --noconfirm --needed \
