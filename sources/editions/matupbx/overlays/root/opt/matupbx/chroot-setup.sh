@@ -70,15 +70,18 @@ if [[ ! -s /etc/resolv.conf ]] || ! grep -q nameserver /etc/resolv.conf 2>/dev/n
     printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
 fi
 
-# pacman needs a readable /etc/mtab to commit transactions. A symlink to
-# /proc/self/mounts breaks when /proc isn't mounted; copying host mounts into
-# mtab confuses path resolution inside the chroot ("could not determine
-# cachedir mount point"). An empty regular file is enough: pacman then treats
-# the whole chroot as one filesystem for free-space checks.
-if [[ -L /etc/mtab || ! -e /etc/mtab ]]; then
-    log "creating empty /etc/mtab for pacman"
+# pacman needs /etc/mtab to resolve mount points for free-space checks before
+# committing a transaction. A symlink to /proc is wrong here: after chroot the
+# host mount table still uses host paths, so /var/cache/pacman/pkg never
+# matches ("could not determine cachedir mount point"). An empty file fails
+# with "could not determine filesystem mount points". Write a synthetic
+# single-entry mtab that treats the chroot root as one filesystem.
+if [[ -L /etc/mtab || ! -e /etc/mtab ]] || ! grep -q ' / ' /etc/mtab 2>/dev/null; then
+    log "writing synthetic /etc/mtab for pacman"
     rm -f /etc/mtab
-    : > /etc/mtab
+    root_src=$(df -P / 2>/dev/null | awk 'NR==2{print $1}')
+    root_fstype=$(stat -f -c %T / 2>/dev/null || echo rootfs)
+    printf '%s / %s rw,relatime 0 0\n' "${root_src:-/dev/root}" "${root_fstype:-rootfs}" > /etc/mtab
 fi
 
 # --- 1. runtime packages ----------------------------------------------------
