@@ -1,0 +1,13 @@
+[Unit]
+Description=MatuPBX database initialization (fallback)
+After=mariadb.service
+Requires=mariadb.service
+ConditionPathExists=/var/www/html/matupbx
+
+[Service]
+Type=oneshot
+ExecStart=/opt/matupbx/matupbx-db-init.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -506,6 +506,16 @@ mkiso_build_iso_cleanups() {
         rm -rf "$remove_dir"
     fi
 
+    # MatuPBX: build Asterisk, deploy the app and bake the database inside
+    # this image chroot. The script ships in the edition overlay under
+    # /opt/matupbx and is idempotent (marker file), so images that inherit
+    # this rootfs skip it. A failure here must fail the build: a half-built
+    # telephony stack is worse than no ISO.
+    if [[ -f "$cpath/opt/matupbx/chroot-setup.sh" && ! -f "$cpath/var/lib/matupbx-chroot-done" ]]; then
+        echo "[MATUPBX] running /opt/matupbx/chroot-setup.sh in $cpath"
+        chroot "$cpath" /usr/bin/bash /opt/matupbx/chroot-setup.sh
+    fi
+
     rm -rf "$cpath/usr/share/doc"/* 2> /dev/null
 
     local libreoffice_path="$cpath/usr/lib/libreoffice/share/config"
