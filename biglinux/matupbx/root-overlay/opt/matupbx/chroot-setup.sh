@@ -70,12 +70,23 @@ if [[ ! -s /etc/resolv.conf ]] || ! grep -q nameserver /etc/resolv.conf 2>/dev/n
     printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
 fi
 
-# pacman refuses to commit a transaction without /etc/mtab ("could not
-# determine filesystem mount points"). manjaro-tools usually provides it;
-# when it doesn't, the first pacman -S that actually installs packages dies.
-if [[ ! -e /etc/mtab ]]; then
+# pacman refuses to commit a transaction without a readable /etc/mtab
+# ("could not open file" / "could not determine filesystem mount points").
+# A symlink to /proc/self/mounts is broken when /proc isn't mounted in the
+# build chroot — mount proc first, then materialize a real mtab file.
+if [[ ! -e /proc/self/mounts ]]; then
+    log "mounting /proc in chroot"
+    mkdir -p /proc
+    mount -t proc proc /proc 2>/dev/null || true
+fi
+if [[ ! -e /etc/mtab || ( -L /etc/mtab && ! -e /etc/mtab ) ]]; then
     log "creating /etc/mtab for pacman"
-    ln -sfn /proc/self/mounts /etc/mtab
+    rm -f /etc/mtab
+    if [[ -r /proc/self/mounts ]]; then
+        cat /proc/self/mounts > /etc/mtab
+    else
+        : > /etc/mtab
+    fi
 fi
 
 # --- 1. runtime packages ----------------------------------------------------
