@@ -24,6 +24,35 @@ fi
 log() { echo "[MATUPBX] $*"; }
 die() { echo "[MATUPBX] FATAL: $*" >&2; exit 1; }
 
+# Robust download inside the build chroot: DNS/TLS can be flaky right after
+# pacman, and a silent `wget -q` failure is impossible to diagnose. Prefer
+# curl (follows GitHub 302 to codeload), fall back to wget, retry a few times.
+fetch() {
+    local url="$1" out="$2" i
+    for i in 1 2 3 4 5; do
+        log "download attempt $i: $url"
+        if curl -fsSL --connect-timeout 20 --max-time 600 --retry 2 -o "$out" "$url"; then
+            [[ -s "$out" ]] || { log "curl wrote empty file"; continue; }
+            log "downloaded $(wc -c <"$out") bytes -> $out"
+            return 0
+        fi
+        log "curl failed (exit $?)"
+        if command -v wget >/dev/null 2>&1; then
+            if wget -O "$out" "$url"; then
+                [[ -s "$out" ]] || { log "wget wrote empty file"; continue; }
+                log "downloaded via wget $(wc -c <"$out") bytes -> $out"
+                return 0
+            fi
+            log "wget failed (exit $?)"
+        fi
+        # Show why: DNS? TLS? empty resolv.conf?
+        log "diag: resolv.conf=$(cat /etc/resolv.conf 2>/dev/null | tr '\n' ' ')"
+        log "diag: getent github.com -> $(getent hosts github.com 2>/dev/null | head -1)"
+        sleep $((i * 2))
+    done
+    return 1
+}
+
 APP_URL="${MATUPBX_TARBALL_URL:-https://github.com/rafaelmaturino/matupbx/archive/refs/heads/main.tar.gz}"
 AST_VERSION="${MATUPBX_ASTERISK_VER:-20.22.0}"
 AST_URL="https://downloads.asterisk.org/pub/telephony/asterisk/asterisk-${AST_VERSION}.tar.gz"
@@ -32,6 +61,14 @@ ODBC_ODBC_URL="https://github.com/mariadb-corporation/mariadb-connector-odbc/arc
 
 APP=/var/www/html/matupbx
 DBDIR=$APP/install/database
+
+# --- 0. network sanity for the chroot ---------------------------------------
+# manjaro-tools usually bind-mounts resolv.conf; if it's missing/broken every
+# HTTPS fetch dies instantly while pacman (mirrorlist) may still have worked.
+if [[ ! -s /etc/resolv.conf ]] || ! grep -q nameserver /etc/resolv.conf 2>/dev/null; then
+    log "fixing /etc/resolv.conf for chroot DNS"
+    printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+fi
 
 # --- 1. runtime packages ----------------------------------------------------
 log "installing runtime packages"
@@ -43,7 +80,7 @@ log "deploying MatuPBX application from $APP_URL"
 mkdir -p /var/www/html
 rm -rf /tmp/matupbx-app "$APP"
 mkdir -p /tmp/matupbx-app
-wget -qO /tmp/matupbx.tar.gz "$APP_URL" || die "cannot download MatuPBX tarball"
+fetch "$APP_URL" /tmp/matupbx.tar.gz || die "cannot download MatuPBX tarball"
 tar -xzf /tmp/matupbx.tar.gz -C /tmp/matupbx-app --strip-components=1 \
     || die "cannot extract MatuPBX tarball"
 mv /tmp/matupbx-app "$APP"
@@ -69,7 +106,7 @@ if [[ ! -e /usr/lib/libmariadbodbc.so ]]; then
     log "building mariadb-connector-odbc $ODBC_ODBC_VERSION"
     rm -rf /tmp/odbc-odbc
     mkdir -p /tmp/odbc-odbc
-    wget -qO /tmp/odbc-odbc.tar.gz "$ODBC_ODBC_URL" || die "cannot download mariadb-connector-odbc"
+    fetch "$ODBC_ODBC_URL" /tmp/odbc-odbc.tar.gz || die "cannot download mariadb-connector-odbc"
     tar -xzf /tmp/odbc-odbc.tar.gz -C /tmp/odbc-odbc --strip-components=1
     cmake -S /tmp/odbc-odbc -B /tmp/odbc-odbc/build \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
@@ -85,7 +122,7 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     log "building Asterisk $AST_VERSION"
     rm -rf /tmp/asterisk
     mkdir -p /tmp/asterisk
-    wget -qO /tmp/asterisk.tar.gz "$AST_URL" || die "cannot download Asterisk tarball"
+    fetch "$AST_URL" /tmp/asterisk.tar.gz || die "cannot download Asterisk tarball"
     tar -xzf /tmp/asterisk.tar.gz -C /tmp/asterisk --strip-components=1
     cd /tmp/asterisk
     ./configure --with-odbc >/tmp/asterisk-configure.log 2>&1 \
