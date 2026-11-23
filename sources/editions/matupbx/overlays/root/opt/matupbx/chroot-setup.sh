@@ -119,15 +119,20 @@ pacman -S --noconfirm --needed \
 if [[ ! -e /usr/lib/libmariadbodbc.so ]]; then
     log "building mariadb-connector-odbc $ODBC_ODBC_VERSION"
     rm -rf /tmp/odbc-odbc
-    mkdir -p /tmp/odbc-odbc
-    fetch "$ODBC_ODBC_URL" /tmp/odbc-odbc.tar.gz || die "cannot download mariadb-connector-odbc"
-    tar -xzf /tmp/odbc-odbc.tar.gz -C /tmp/odbc-odbc --strip-components=1
+    # GitHub's source tarball omits git submodules (libmariadb, driver/cppmini);
+    # cmake then dies with "No MariaDB Connector/C++ mini branch". Clone
+    # recursively instead of downloading the archive.
+    git clone --depth 1 --branch "$ODBC_ODBC_VERSION" --recurse-submodules \
+        --shallow-submodules \
+        https://github.com/mariadb-corporation/mariadb-connector-odbc.git \
+        /tmp/odbc-odbc \
+        || die "cannot clone mariadb-connector-odbc"
     cmake -S /tmp/odbc-odbc -B /tmp/odbc-odbc/build \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
     cmake --build /tmp/odbc-odbc/build -j"$(nproc)"
     cmake --install /tmp/odbc-odbc/build
     ldconfig
-    rm -rf /tmp/odbc-odbc /tmp/odbc-odbc.tar.gz
+    rm -rf /tmp/odbc-odbc
 fi
 [[ -e /usr/lib/libmariadbodbc.so ]] || die "libmariadbodbc.so missing after build"
 
