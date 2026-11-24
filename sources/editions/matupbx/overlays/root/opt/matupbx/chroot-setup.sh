@@ -168,21 +168,41 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     tar -xzf /tmp/asterisk.tar.gz -C /tmp/asterisk --strip-components=1
     cd /tmp/asterisk
     # chan_sip only (SNEP); bundled pjproject is for res_pjsip.
-    # The shipped configure writes a corrupt config.status on this toolchain
-    # (`0a1,540`, literal `_ASBOX`, stray `>` lines). Regenerate configure with
-    # the system autoconf from base-devel, then run a clean configure.
+    # Shipped configure writes a corrupt config.status in this chroot
+    # (`0a1,540`, literal `_ASBOX`). Host build of the same tarball is fine —
+    # the chroot env (locale/shell opts/PATH) poisons generation. Run under
+    # env -i with a minimal, explicit environment.
     export LANG=C LC_ALL=C
     export CONFIG_SHELL=/bin/bash SHELL=/bin/bash
     set +e
     set +u
     set +o pipefail
-    if [[ -f configure.ac || -f configure.in ]]; then
-        log "regenerating configure with system autoconf"
-        # shellcheck disable=SC2086
-        autoreconf -f -i -W all >/tmp/asterisk-autoreconf.log 2>&1 \
-            || { tail -40 /tmp/asterisk-autoreconf.log; log "autoreconf failed; trying shipped configure"; }
+
+    # Keep a pristine copy of the shipped configure before any autoreconf.
+    cp -a configure configure.shipped 2>/dev/null || true
+
+    if [[ -f configure.ac ]]; then
+        log "trying system autoconf on configure.ac"
+        if autoconf >/tmp/asterisk-autoconf.log 2>&1; then
+            log "autoconf regenerated configure"
+        else
+            log "autoconf failed; restoring shipped configure"
+            tail -30 /tmp/asterisk-autoconf.log || true
+            if [[ -f configure.shipped ]]; then
+                mv -f configure.shipped configure
+            fi
+        fi
     fi
-    /bin/bash ./configure --with-odbc --with-pjproject=no \
+
+    log "running configure under env -i"
+    env -i \
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        HOME=/tmp \
+        TERM=dumb \
+        LANG=C LC_ALL=C \
+        CONFIG_SHELL=/bin/bash \
+        SHELL=/bin/bash \
+        /bin/bash ./configure --with-odbc --with-pjproject=no \
         >/tmp/asterisk-configure.log 2>&1 \
         || {
             set -euo pipefail
@@ -195,7 +215,6 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
             die "asterisk configure failed"
         }
     set -euo pipefail
-    # Sanity: config.status must be a runnable shell script
     if ! bash -n config.status 2>/dev/null; then
         die "config.status failed bash -n syntax check"
     fi
