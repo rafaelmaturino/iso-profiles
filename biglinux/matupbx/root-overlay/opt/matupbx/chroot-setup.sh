@@ -233,8 +233,16 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
         tail -60 /tmp/asterisk-configure.log
         die "asterisk configure did not produce makeopts (rc=$conf_rc)"
     fi
+    # Build the menuselect binary + default makeopts before flipping switches.
+    make menuselect.makeopts >/tmp/asterisk-menuselect-opts.log 2>&1 \
+        || { tail -40 /tmp/asterisk-menuselect-opts.log; die "make menuselect.makeopts failed"; }
+    if [[ ! -x menuselect/menuselect ]]; then
+        make menuselect/menuselect >/tmp/asterisk-menuselect-bin.log 2>&1 \
+            || { tail -40 /tmp/asterisk-menuselect-bin.log; die "building menuselect failed"; }
+    fi
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
-    menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts
+    menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts \
+        || die "menuselect --enable ODBC_STORAGE failed"
     make -j"$(nproc)" >/tmp/asterisk-make.log 2>&1 \
         || { tail -40 /tmp/asterisk-make.log; die "asterisk make failed"; }
     make install >/tmp/asterisk-install.log 2>&1 \
