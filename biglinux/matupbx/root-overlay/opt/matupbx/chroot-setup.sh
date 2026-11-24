@@ -160,22 +160,22 @@ fi
 [[ -e /usr/lib/libmariadbodbc.so ]] || die "libmariadbodbc.so missing after build"
 
 # Strip autoconf config.status corruption seen only in this build chroot:
-# stray `0a1,N` sed-append fragments and `> ` prefixed comment lines
-# (including bare `>`). Host build of the same tarball is clean.
-# No process substitution: /dev/fd is unavailable in this chroot.
+# stray `0a1,N` sed-append fragments and a bogus `> ` line prefix (breaks
+# here-docs so cache assignments get executed as commands). Host build of
+# the same tarball is clean. No process substitution: /dev/fd is broken here.
 repair_config_status() {
     local f list=/tmp/cs-list.$$
     find /tmp/asterisk -name config.status -type f 2>/dev/null >"$list" || true
     while read -r f; do
         [[ -n "$f" && -f "$f" ]] || continue
-        if ! bash -n "$f" 2>/dev/null; then
+        if ! bash -n "$f" 2>/dev/null || grep -qE '^0a[0-9]|^> ' "$f" 2>/dev/null; then
             log "repairing $f"
             sed -i -E \
                 -e '/^0a[0-9]+(,[0-9]+)?$/d' \
                 -e '/^[[:space:]]*>[[:space:]]*$/d' \
-                -e 's/^> (#)/\1/' \
+                -e 's/^> //' \
                 "$f"
-            bash -n "$f" || { sed -n '520,580p' "$f" >&2; die "still corrupt: $f"; }
+            bash -n "$f" || { sed -n '590,640p' "$f" >&2; die "still corrupt: $f"; }
         fi
     done <"$list"
     rm -f "$list"
@@ -265,11 +265,15 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
             true
         )
         repair_config_status
+        # config.status must run with CWD=menuselect so it finds autoconfig.h.in
         if [[ -f menuselect/config.status ]]; then
-            /bin/bash menuselect/config.status >/tmp/asterisk-menuselect-cs.log 2>&1 \
-                || { tail -40 /tmp/asterisk-menuselect-cs.log; die "menuselect config.status failed"; }
+            (
+                cd menuselect
+                /bin/bash ./config.status >/tmp/asterisk-menuselect-cs.log 2>&1
+            ) || { tail -40 /tmp/asterisk-menuselect-cs.log; die "menuselect config.status failed"; }
         fi
-        [[ -f menuselect/makeopts ]] || die "menuselect/makeopts missing after pre-configure"
+        [[ -f menuselect/makeopts || -f menuselect.makeopts ]] \
+            || die "menuselect makeopts missing after pre-configure"
         log "menuselect pre-configured"
     fi
 
