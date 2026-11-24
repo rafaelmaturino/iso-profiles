@@ -109,7 +109,7 @@ chmod +x "$APP"/agi/* 2>/dev/null || true
 log "installing build dependencies"
 pacman -S --noconfirm --needed \
     base-devel cmake \
-    mariadb-connector-c \
+    mariadb-connector-c libltdl \
     jansson libedit ncurses sqlite libxslt openssl \
     libogg libvorbis speex opus libsrtp
 
@@ -158,6 +158,24 @@ if [[ ! -e /usr/lib/libmariadbodbc.so ]]; then
     rm -rf /tmp/odbc-odbc
 fi
 [[ -e /usr/lib/libmariadbodbc.so ]] || die "libmariadbodbc.so missing after build"
+
+# Strip autoconf config.status corruption seen only in this build chroot:
+# stray `0a1,N` sed-append fragments and `> ` prefixed comment lines
+# (including bare `>`). Host build of the same tarball is clean.
+repair_config_status() {
+    local f
+    while IFS= read -r -d '' f; do
+        if ! bash -n "$f" 2>/dev/null; then
+            log "repairing $f"
+            sed -i -E \
+                -e '/^0a[0-9]+(,[0-9]+)?$/d' \
+                -e '/^[[:space:]]*>[[:space:]]*$/d' \
+                -e 's/^> (#)/\1/' \
+                "$f"
+            bash -n "$f" || { sed -n '520,580p' "$f" >&2; die "still corrupt: $f"; }
+        fi
+    done < <(find /tmp/asterisk -name config.status -type f -print0 2>/dev/null)
+}
 
 # --- 5. Asterisk ------------------------------------------------------------
 if [[ ! -x /usr/sbin/asterisk ]]; then
@@ -211,14 +229,7 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     if [[ -f config.status ]]; then
         if ! bash -n config.status 2>/dev/null; then
             log "repairing corrupt config.status (conf_rc=$conf_rc)"
-            # Without /proc in the chroot, configure writes garbage into
-            # config.status: `0a1,540` sed fragments and `> ` prefixed lines
-            # (including bare `>`). Strip those; keep legitimate redirects.
-            sed -i -E \
-                -e '/^0a[0-9]+(,[0-9]+)?$/d' \
-                -e '/^[[:space:]]*>[[:space:]]*$/d' \
-                -e 's/^> (#)/\1/' \
-                config.status
+            repair_config_status
             bash -n config.status \
                 || { sed -n '520,580p' config.status >&2; die "config.status still corrupt after repair"; }
             log "config.status repaired"
@@ -233,18 +244,50 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
         tail -60 /tmp/asterisk-configure.log
         die "asterisk configure did not produce makeopts (rc=$conf_rc)"
     fi
-    # Build the menuselect binary + default makeopts before flipping switches.
-    make menuselect.makeopts >/tmp/asterisk-menuselect-opts.log 2>&1 \
-        || { tail -40 /tmp/asterisk-menuselect-opts.log; die "make menuselect.makeopts failed"; }
-    if [[ ! -x menuselect/menuselect ]]; then
-        make menuselect/menuselect >/tmp/asterisk-menuselect-bin.log 2>&1 \
-            || { tail -40 /tmp/asterisk-menuselect-bin.log; die "building menuselect failed"; }
+
+    # menuselect ships its own configure; it also writes a corrupt
+    # config.status in this chroot. Pre-run it with repair so the
+    # menuselect/makeopts rule finds a fresh file and skips re-configure.
+    if [[ -x menuselect/configure ]]; then
+        log "pre-configuring menuselect"
+        (
+            cd menuselect
+            set +e
+            env -i \
+                PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                HOME=/tmp TERM=dumb LANG=C LC_ALL=C \
+                CONFIG_SHELL=/bin/bash SHELL=/bin/bash \
+                /bin/bash ./configure >/tmp/asterisk-menuselect-conf.log 2>&1
+            true
+        )
+        repair_config_status
+        if [[ -f menuselect/config.status ]]; then
+            /bin/bash menuselect/config.status >/tmp/asterisk-menuselect-cs.log 2>&1 \
+                || { tail -40 /tmp/asterisk-menuselect-cs.log; die "menuselect config.status failed"; }
+        fi
+        [[ -f menuselect/makeopts ]] || die "menuselect/makeopts missing after pre-configure"
+        log "menuselect pre-configured"
     fi
+
+    # Build the menuselect tool first (uses menuselect/makeopts).
+    make menuselect/menuselect >/tmp/asterisk-menuselect-bin.log 2>&1 \
+        || { tail -40 /tmp/asterisk-menuselect-bin.log; die "building menuselect failed"; }
+
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
-    menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts \
-        || die "menuselect --enable ODBC_STORAGE failed"
+    # Category MENUSELECT_OPTS_app_voicemail is positive_output: listing
+    # ODBC_STORAGE there means "build with ODBC voicemail storage".
+    if [[ -x menuselect/menuselect ]]; then
+        menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts \
+            || die "menuselect --enable ODBC_STORAGE failed"
+    elif [[ -f menuselect.makeopts ]]; then
+        if grep -q '^MENUSELECT_OPTS_app_voicemail=' menuselect.makeopts; then
+            sed -i 's/^MENUSELECT_OPTS_app_voicemail=.*/MENUSELECT_OPTS_app_voicemail=ODBC_STORAGE/' menuselect.makeopts
+        else
+            echo 'MENUSELECT_OPTS_app_voicemail=ODBC_STORAGE' >> menuselect.makeopts
+        fi
+    fi
     make -j"$(nproc)" >/tmp/asterisk-make.log 2>&1 \
-        || { tail -40 /tmp/asterisk-make.log; die "asterisk make failed"; }
+        || { tail -60 /tmp/asterisk-make.log; die "asterisk make failed"; }
     make install >/tmp/asterisk-install.log 2>&1 \
         || { tail -40 /tmp/asterisk-install.log; die "asterisk make install failed"; }
     # systemd unit from the source tree (no `make config`: sysv-only).
