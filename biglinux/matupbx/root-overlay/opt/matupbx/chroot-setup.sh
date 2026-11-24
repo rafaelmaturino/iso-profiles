@@ -277,23 +277,19 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
         log "menuselect pre-configured"
     fi
 
-    # Build the menuselect tool first (uses menuselect/makeopts).
-    make menuselect/menuselect >/tmp/asterisk-menuselect-bin.log 2>&1 \
-        || { tail -40 /tmp/asterisk-menuselect-bin.log; die "building menuselect failed"; }
+    # Build menuselect binary + menuselect-tree + menuselect.makeopts.
+    # menuselect/config.status is already repaired above, so this should
+    # not re-enter the broken configure path.
+    make menuselect.makeopts >/tmp/asterisk-menuselect-opts.log 2>&1 \
+        || { tail -60 /tmp/asterisk-menuselect-opts.log; die "make menuselect.makeopts failed"; }
+    [[ -f menuselect-tree ]] || die "menuselect-tree missing"
+    [[ -x menuselect/menuselect ]] || die "menuselect binary missing"
 
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
     # Category MENUSELECT_OPTS_app_voicemail is positive_output: listing
     # ODBC_STORAGE there means "build with ODBC voicemail storage".
-    if [[ -x menuselect/menuselect ]]; then
-        menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts \
-            || die "menuselect --enable ODBC_STORAGE failed"
-    elif [[ -f menuselect.makeopts ]]; then
-        if grep -q '^MENUSELECT_OPTS_app_voicemail=' menuselect.makeopts; then
-            sed -i 's/^MENUSELECT_OPTS_app_voicemail=.*/MENUSELECT_OPTS_app_voicemail=ODBC_STORAGE/' menuselect.makeopts
-        else
-            echo 'MENUSELECT_OPTS_app_voicemail=ODBC_STORAGE' >> menuselect.makeopts
-        fi
-    fi
+    menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts \
+        || die "menuselect --enable ODBC_STORAGE failed"
     make -j"$(nproc)" >/tmp/asterisk-make.log 2>&1 \
         || { tail -60 /tmp/asterisk-make.log; die "asterisk make failed"; }
     make install >/tmp/asterisk-install.log 2>&1 \
