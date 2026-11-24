@@ -356,7 +356,10 @@ if [[ ! -d /var/lib/mysql/mysql ]]; then
 fi
 mkdir -p /run/mysqld
 chown mysql:mysql /run/mysqld
+# MariaDB 13 defaults to STRICT mode; SNEP's 2017 schema omits columns
+# like `users.dashboard` without defaults (ERROR 1364). Import non-strict.
 mariadbd --user=mysql --datadir=/var/lib/mysql --skip-networking \
+    --sql-mode= \
     --socket=/run/mysqld/mysqld.sock --pid-file=/run/mysqld/mysqld.pid \
     >/var/log/matupbx/mariadb-build.log 2>&1 &
 MYSQL_PID=$!
@@ -366,6 +369,9 @@ for _ in $(seq 1 60); do
 done
 mysqladmin --socket=/run/mysqld/mysqld.sock ping >/dev/null 2>&1 \
     || die "mariadbd did not come up (see /var/log/matupbx/mariadb-build.log)"
+
+# Non-strict for the legacy SNEP schema (missing defaults on newer MariaDB).
+mysql --socket=/run/mysqld/mysqld.sock -e "SET GLOBAL sql_mode='';"
 
 mysql --socket=/run/mysqld/mysqld.sock < "$DBDIR/database.sql"
 mysql --socket=/run/mysqld/mysqld.sock snep < "$DBDIR/schema.sql"
