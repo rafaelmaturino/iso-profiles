@@ -211,32 +211,27 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     if [[ -f config.status ]]; then
         if ! bash -n config.status 2>/dev/null; then
             log "repairing corrupt config.status (conf_rc=$conf_rc)"
-            # This chroot's configure emits stray `0a1,540` and `> #` comment
-            # blocks into config.status (host build of the same tarball is fine).
-            # Strip the sed-append fragments and the bogus `> ` prefix on comments.
+            # Without /proc in the chroot, configure writes garbage into
+            # config.status: `0a1,540` sed fragments and `> ` prefixed lines
+            # (including bare `>`). Strip those; keep legitimate redirects.
             sed -i -E \
                 -e '/^0a[0-9]+(,[0-9]+)?$/d' \
+                -e '/^[[:space:]]*>[[:space:]]*$/d' \
                 -e 's/^> (#)/\1/' \
                 config.status
             bash -n config.status \
-                || { sed -n '520,560p' config.status >&2; die "config.status still corrupt after repair"; }
+                || { sed -n '520,580p' config.status >&2; die "config.status still corrupt after repair"; }
             log "config.status repaired"
         fi
-        # config.status must run to emit Makefiles / makeopts / autoconfig.h
         /bin/bash config.status >/tmp/asterisk-config-status.log 2>&1 \
             || { tail -40 /tmp/asterisk-config-status.log; die "config.status execution failed"; }
     else
         tail -60 /tmp/asterisk-configure.log
         die "asterisk configure failed (no config.status, rc=$conf_rc)"
     fi
-    if ! grep -q 'Menuselect build configuration successfully completed' /tmp/asterisk-configure.log \
-        && ! [[ -f makeopts ]]; then
-        # configure may have exited non-zero only because config.status failed;
-        # makeopts is the real signal that checks finished.
-        if [[ ! -f makeopts ]]; then
-            tail -60 /tmp/asterisk-configure.log
-            die "asterisk configure did not produce makeopts (rc=$conf_rc)"
-        fi
+    if [[ ! -f makeopts ]]; then
+        tail -60 /tmp/asterisk-configure.log
+        die "asterisk configure did not produce makeopts (rc=$conf_rc)"
     fi
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
     menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts
