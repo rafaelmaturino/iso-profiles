@@ -162,9 +162,12 @@ fi
 # Strip autoconf config.status corruption seen only in this build chroot:
 # stray `0a1,N` sed-append fragments and `> ` prefixed comment lines
 # (including bare `>`). Host build of the same tarball is clean.
+# No process substitution: /dev/fd is unavailable in this chroot.
 repair_config_status() {
-    local f
-    while IFS= read -r -d '' f; do
+    local f list=/tmp/cs-list.$$
+    find /tmp/asterisk -name config.status -type f 2>/dev/null >"$list" || true
+    while read -r f; do
+        [[ -n "$f" && -f "$f" ]] || continue
         if ! bash -n "$f" 2>/dev/null; then
             log "repairing $f"
             sed -i -E \
@@ -174,7 +177,8 @@ repair_config_status() {
                 "$f"
             bash -n "$f" || { sed -n '520,580p' "$f" >&2; die "still corrupt: $f"; }
         fi
-    done < <(find /tmp/asterisk -name config.status -type f -print0 2>/dev/null)
+    done <"$list"
+    rm -f "$list"
 }
 
 # --- 5. Asterisk ------------------------------------------------------------
