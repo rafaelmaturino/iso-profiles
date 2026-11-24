@@ -62,7 +62,31 @@ ODBC_ODBC_URL="https://github.com/mariadb-corporation/mariadb-connector-odbc/arc
 APP=/var/www/html/matupbx
 DBDIR=$APP/install/database
 
-# --- 0. network sanity for the chroot ---------------------------------------
+# --- 0. mounts + network sanity for the chroot ------------------------------
+# Without /proc, autoconf's config.status generation corrupts (stray
+# `0a1,N` / `> ` lines) and some tools fail. Mount here and tear down
+# before exit so manjaro-tools' rootfs clean never sees a live /proc.
+MATUPBX_MOUNTED=0
+if [[ ! -e /proc/self/uptime ]]; then
+    log "mounting /proc /sys /dev /run in chroot"
+    mkdir -p /proc /sys /dev /run
+    mount -t proc proc /proc 2>/dev/null || true
+    mount -t sysfs sysfs /sys 2>/dev/null || true
+    mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t devtmpfs none /dev 2>/dev/null || true
+    mount -t tmpfs tmpfs /run 2>/dev/null || true
+    MATUPBX_MOUNTED=1
+fi
+matupbx_umount_chroot() {
+    if [[ "${MATUPBX_MOUNTED:-0}" = 1 ]]; then
+        umount -l /run 2>/dev/null || true
+        umount -l /dev 2>/dev/null || true
+        umount -l /sys 2>/dev/null || true
+        umount -l /proc 2>/dev/null || true
+        MATUPBX_MOUNTED=0
+    fi
+}
+trap matupbx_umount_chroot EXIT
+
 # manjaro-tools usually bind-mounts resolv.conf; if it's missing/broken every
 # HTTPS fetch dies instantly while pacman (mirrorlist) may still have worked.
 if [[ ! -s /etc/resolv.conf ]] || ! grep -q nameserver /etc/resolv.conf 2>/dev/null; then

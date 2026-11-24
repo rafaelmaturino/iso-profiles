@@ -512,28 +512,12 @@ mkiso_build_iso_cleanups() {
     # this rootfs skip it. A failure here must fail the build: a half-built
     # telephony stack is worse than no ISO.
     #
-    # Mount proc/sys/dev for the duration of the hook: without /proc,
-    # autoconf's config.status generation corrupts (stray `0a1,540` /
-    # `> #` lines) and pacman cannot resolve mount points.
+    # proc/sys/dev are mounted inside chroot-setup.sh itself (and torn down
+    # there before exit) so manjaro-tools' later rootfs clean does not walk
+    # a live /proc and die on "Invalid argument".
     if [[ -f "$cpath/opt/matupbx/chroot-setup.sh" && ! -f "$cpath/var/lib/matupbx-chroot-done" ]]; then
         echo "[MATUPBX] running /opt/matupbx/chroot-setup.sh in $cpath"
-        mkdir -p "$cpath/proc" "$cpath/sys" "$cpath/dev" "$cpath/run"
-        mountpoint -q "$cpath/proc" || mount -t proc proc "$cpath/proc"
-        mountpoint -q "$cpath/sys" || mount -t sysfs sysfs "$cpath/sys"
-        mountpoint -q "$cpath/dev" || mount -t devtmpfs devtmpfs "$cpath/dev" 2>/dev/null \
-            || mount -t devtmpfs none "$cpath/dev" 2>/dev/null || true
-        mountpoint -q "$cpath/run" || mount -t tmpfs tmpfs "$cpath/run"
-        # Bind the chroot root onto itself so /proc/self/mounts shows `/`
-        # as a real mount point (pacman free-space checks).
-        mountpoint -q "$cpath" || mount --bind "$cpath" "$cpath"
         chroot "$cpath" /usr/bin/bash /opt/matupbx/chroot-setup.sh
-        rc=$?
-        umount -l "$cpath/run" 2>/dev/null || true
-        umount -l "$cpath/dev" 2>/dev/null || true
-        umount -l "$cpath/sys" 2>/dev/null || true
-        umount -l "$cpath/proc" 2>/dev/null || true
-        umount -l "$cpath" 2>/dev/null || true
-        ((rc == 0)) || return "$rc"
     fi
 
     rm -rf "$cpath/usr/share/doc"/* 2> /dev/null
