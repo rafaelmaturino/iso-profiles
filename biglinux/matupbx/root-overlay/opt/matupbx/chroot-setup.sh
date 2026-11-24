@@ -195,6 +195,7 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     fi
 
     log "running configure under env -i"
+    set +e
     env -i \
         PATH=/usr/sbin:/usr/bin:/sbin:/bin \
         HOME=/tmp \
@@ -203,20 +204,39 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
         CONFIG_SHELL=/bin/bash \
         SHELL=/bin/bash \
         /bin/bash ./configure --with-odbc --with-pjproject=no \
-        >/tmp/asterisk-configure.log 2>&1 \
-        || {
-            set -euo pipefail
-            tail -60 /tmp/asterisk-configure.log
-            if [[ -f config.status ]]; then
-                echo "--- config.status wc ---" >&2
-                wc -l config.status >&2 || true
-                grep -n '0a1,\|_ASBOX' config.status | head -10 >&2 || true
-            fi
-            die "asterisk configure failed"
-        }
+        >/tmp/asterisk-configure.log 2>&1
+    conf_rc=$?
     set -euo pipefail
-    if ! bash -n config.status 2>/dev/null; then
-        die "config.status failed bash -n syntax check"
+
+    if [[ -f config.status ]]; then
+        if ! bash -n config.status 2>/dev/null; then
+            log "repairing corrupt config.status (conf_rc=$conf_rc)"
+            # This chroot's configure emits stray `0a1,540` and `> #` comment
+            # blocks into config.status (host build of the same tarball is fine).
+            # Strip the sed-append fragments and the bogus `> ` prefix on comments.
+            sed -i -E \
+                -e '/^0a[0-9]+(,[0-9]+)?$/d' \
+                -e 's/^> (#)/\1/' \
+                config.status
+            bash -n config.status \
+                || { sed -n '520,560p' config.status >&2; die "config.status still corrupt after repair"; }
+            log "config.status repaired"
+        fi
+        # config.status must run to emit Makefiles / makeopts / autoconfig.h
+        /bin/bash config.status >/tmp/asterisk-config-status.log 2>&1 \
+            || { tail -40 /tmp/asterisk-config-status.log; die "config.status execution failed"; }
+    else
+        tail -60 /tmp/asterisk-configure.log
+        die "asterisk configure failed (no config.status, rc=$conf_rc)"
+    fi
+    if ! grep -q 'Menuselect build configuration successfully completed' /tmp/asterisk-configure.log \
+        && ! [[ -f makeopts ]]; then
+        # configure may have exited non-zero only because config.status failed;
+        # makeopts is the real signal that checks finished.
+        if [[ ! -f makeopts ]]; then
+            tail -60 /tmp/asterisk-configure.log
+            die "asterisk configure did not produce makeopts (rc=$conf_rc)"
+        fi
     fi
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
     menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts
