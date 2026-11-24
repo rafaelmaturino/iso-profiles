@@ -286,10 +286,10 @@ if [[ ! -x /usr/sbin/asterisk ]]; then
     [[ -x menuselect/menuselect ]] || die "menuselect binary missing"
 
     # SNEP stores voicemail in MySQL through ODBC (see voicemail.conf).
-    # Category MENUSELECT_OPTS_app_voicemail is positive_output: listing
-    # ODBC_STORAGE there means "build with ODBC voicemail storage".
-    menuselect/menuselect --enable ODBC_STORAGE menuselect.makeopts \
-        || die "menuselect --enable ODBC_STORAGE failed"
+    # Asterisk 20 ships ODBC voicemail as the separate module app_voicemail_odbc
+    # (the old ODBC_STORAGE build-option no longer exists in the real tree).
+    menuselect/menuselect --enable app_voicemail_odbc menuselect.makeopts \
+        || die "menuselect --enable app_voicemail_odbc failed"
     make -j"$(nproc)" >/tmp/asterisk-make.log 2>&1 \
         || { tail -60 /tmp/asterisk-make.log; die "asterisk make failed"; }
     make install >/tmp/asterisk-install.log 2>&1 \
