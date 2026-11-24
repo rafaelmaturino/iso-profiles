@@ -6,7 +6,6 @@ kfind
 kdialog
 pavucontrol-qt
 kscreen
-wacomtablet
 plasma-thunderbolt
 kio-gdrive
 mintstick
@@ -66,7 +65,6 @@ plasma-keyboard
 bluedevil
 kde-gtk-config
 kdeplasma-addons
-kgamma
 kinfocenter
 kmenuedit
 kscreenlocker
